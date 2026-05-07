@@ -13,15 +13,19 @@ echo "=== EnglishCoach — First Time Setup ==="
 # System packages
 echo "[1/5] Installing system packages..."
 sudo apt-get update -qq
-sudo apt-get install -y python3 python3-pip python3-venv ffmpeg git
+sudo apt-get install -y python3 python3-pip python3-venv python3-full ffmpeg git
 
 # Virtual environment
 echo "[2/5] Creating virtual environment..."
 cd "$REPO_DIR"
 if [ ! -d "venv" ]; then
-    $PYTHON -m venv venv
+    $PYTHON -m venv venv || {
+        echo "       venv failed, trying with --without-pip..."
+        $PYTHON -m venv --without-pip venv
+    }
 fi
 source venv/bin/activate
+python -m ensurepip --upgrade 2>/dev/null || true
 pip install --upgrade pip -q
 pip install -r requirements.txt -q
 echo "       Dependencies installed."
