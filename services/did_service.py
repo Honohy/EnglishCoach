@@ -42,20 +42,23 @@ async def _create_clip(audio_bytes: bytes, audio_format: str = "mp3") -> tuple[s
     if DID_DRIVER_ID:
         payload["driver_id"] = DID_DRIVER_ID
 
+    logger.info(f"D-ID request: presenter_id={DID_PRESENTER_ID}, audio_size={len(audio_bytes)}b, format={audio_format}")
+
     async with aiohttp.ClientSession() as session:
         try:
             async with session.post(
                 f"{DID_BASE}/clips", json=payload, headers=_auth_headers()
             ) as resp:
+                body = await resp.text()
+                logger.info(f"D-ID response {resp.status}: {body}")
                 if resp.status not in (200, 201):
-                    text = await resp.text()
-                    logger.error(f"D-ID create error {resp.status}: {text}")
-                    return None, f"D-ID API {resp.status}: {text[:200]}"
-                data = await resp.json()
+                    return None, f"D-ID {resp.status}: {body}"
+                import json as _json
+                data = _json.loads(body)
                 return data.get("id"), ""
         except Exception as e:
-            logger.error(f"D-ID create_clip: {e}")
-            return None, f"D-ID create_clip: {e}"
+            logger.error(f"D-ID create_clip exception: {e}")
+            return None, f"D-ID exception: {e}"
 
 
 async def _poll_clip(clip_id: str) -> tuple[str | None, str]:
