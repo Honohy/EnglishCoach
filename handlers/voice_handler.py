@@ -66,24 +66,29 @@ async def process_audio_message(message: Message, bot: Bot, file_format: str = "
     # Save assistant response
     await add_voice_message(user_id, "assistant", response_text)
 
-    # TTS → try D-ID video_note → fallback to voice
+    # TTS → try D-ID video_note → fallback to voice → fallback to text
     await bot.send_chat_action(message.chat.id, "upload_video_note")
-    mp3_bytes = await text_to_speech(response_text)
+    mp3_bytes, tts_err = await text_to_speech(response_text)
 
-    video_bytes = b""
-    if mp3_bytes:
-        video_bytes = await generate_video_note(mp3_bytes)
+    if not mp3_bytes:
+        await message.answer(f"⚠️ TTS failed: `{tts_err}`", parse_mode="Markdown")
+        await message.answer(f"🗣 {response_text}")
+        return
+
+    video_bytes, did_err = await generate_video_note(mp3_bytes)
 
     if video_bytes:
         video_input = BufferedInputFile(video_bytes, filename="response.mp4")
         await message.answer_video_note(video_input)
         await message.answer(f"_{response_text}_", parse_mode="Markdown")
     else:
-        ogg_bytes = await mp3_to_ogg(mp3_bytes) if mp3_bytes else b""
+        await message.answer(f"⚠️ Video note failed: `{did_err}`", parse_mode="Markdown")
+        ogg_bytes, ogg_err = await mp3_to_ogg(mp3_bytes)
         if ogg_bytes:
             audio_input = BufferedInputFile(ogg_bytes, filename="response.ogg")
             await message.answer_voice(audio_input, caption=f"_{response_text}_", parse_mode="Markdown")
         else:
+            await message.answer(f"⚠️ Voice fallback failed: `{ogg_err}`", parse_mode="Markdown")
             await message.answer(f"🗣 {response_text}")
 
     # Background grammar check (send as separate message if errors found)

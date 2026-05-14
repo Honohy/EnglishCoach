@@ -28,7 +28,7 @@ def _auth_headers(with_content_type: bool = True) -> dict:
     return h
 
 
-async def _create_clip(audio_bytes: bytes, audio_format: str = "mp3") -> str | None:
+async def _create_clip(audio_bytes: bytes, audio_format: str = "mp3") -> tuple[str | None, str]:
     mime = "audio/mpeg" if audio_format == "mp3" else f"audio/{audio_format}"
     b64 = base64.b64encode(audio_bytes).decode()
     payload = {
@@ -50,15 +50,15 @@ async def _create_clip(audio_bytes: bytes, audio_format: str = "mp3") -> str | N
                 if resp.status not in (200, 201):
                     text = await resp.text()
                     logger.error(f"D-ID create error {resp.status}: {text}")
-                    return None
+                    return None, f"D-ID API {resp.status}: {text[:200]}"
                 data = await resp.json()
-                return data.get("id")
+                return data.get("id"), ""
         except Exception as e:
             logger.error(f"D-ID create_clip: {e}")
-            return None
+            return None, f"D-ID create_clip: {e}"
 
 
-async def _poll_clip(clip_id: str) -> str | None:
+async def _poll_clip(clip_id: str) -> tuple[str | None, str]:
     deadline = asyncio.get_event_loop().time() + POLL_TIMEOUT
     async with aiohttp.ClientSession() as session:
         while asyncio.get_event_loop().time() < deadline:
@@ -70,16 +70,17 @@ async def _poll_clip(clip_id: str) -> str | None:
                     data = await resp.json()
                     status = data.get("status")
                     if status == "done":
-                        return data.get("result_url")
+                        return data.get("result_url"), ""
                     if status == "error":
+                        err = data.get("error", {})
                         logger.error(f"D-ID clip failed: {data}")
-                        return None
+                        return None, f"D-ID clip error: {err}"
             except Exception as e:
                 logger.error(f"D-ID poll: {e}")
-                return None
+                return None, f"D-ID poll: {e}"
             await asyncio.sleep(POLL_INTERVAL)
     logger.error(f"D-ID poll timeout for {clip_id}")
-    return None
+    return None, f"D-ID timeout after {POLL_TIMEOUT}s"
 
 
 async def _download(url: str) -> bytes:
@@ -122,21 +123,23 @@ def _crop_square(video_bytes: bytes) -> bytes:
         return video_bytes
 
 
-async def generate_video_note(audio_bytes: bytes, audio_format: str = "mp3") -> bytes:
-    """Full pipeline: audio bytes → D-ID clip → square mp4 for Telegram video_note."""
-    if not DID_API_KEY or not DID_PRESENTER_ID:
-        return b""
+async def generate_video_note(audio_bytes: bytes, audio_format: str = "mp3") -> tuple[bytes, str]:
+    """Full pipeline: audio bytes → D-ID clip → square mp4. Returns (video, error_reason)."""
+    if not DID_API_KEY:
+        return b"", "DID_API_KEY not set"
+    if not DID_PRESENTER_ID:
+        return b"", "DID_PRESENTER_ID not set"
 
-    clip_id = await _create_clip(audio_bytes, audio_format)
+    clip_id, err = await _create_clip(audio_bytes, audio_format)
     if not clip_id:
-        return b""
+        return b"", err
 
-    result_url = await _poll_clip(clip_id)
+    result_url, err = await _poll_clip(clip_id)
     if not result_url:
-        return b""
+        return b"", err
 
     video_bytes = await _download(result_url)
     if not video_bytes:
-        return b""
+        return b"", "Failed to download video from D-ID"
 
-    return _crop_square(video_bytes)
+    return _crop_square(video_bytes), ""

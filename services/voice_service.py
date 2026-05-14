@@ -5,6 +5,7 @@ Handles voice notes and video notes (circles) in Telegram.
 """
 import io
 import logging
+import subprocess
 import tempfile
 import os
 from openai import AsyncOpenAI
@@ -35,10 +36,8 @@ async def speech_to_text(audio_bytes: bytes, file_format: str = "ogg") -> str:
         return ""
 
 
-async def text_to_speech(text: str) -> bytes:
-    """
-    Convert text to speech audio bytes (mp3).
-    """
+async def text_to_speech(text: str) -> tuple[bytes, str]:
+    """Convert text to speech audio bytes (mp3). Returns (audio, error_reason)."""
     try:
         response = await openai_client.audio.speech.create(
             model=TTS_MODEL,
@@ -46,14 +45,14 @@ async def text_to_speech(text: str) -> bytes:
             input=text,
             response_format="mp3"
         )
-        return response.content
+        return response.content, ""
     except Exception as e:
         logger.error(f"TTS error: {e}")
-        return b""
+        return b"", f"OpenAI TTS: {e}"
 
 
-async def mp3_to_ogg(mp3_bytes: bytes) -> bytes:
-    """Convert mp3 bytes to ogg/opus for Telegram voice messages."""
+async def mp3_to_ogg(mp3_bytes: bytes) -> tuple[bytes, str]:
+    """Convert mp3 bytes to ogg/opus for Telegram voice messages. Returns (audio, error_reason)."""
     try:
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
             f.write(mp3_bytes)
@@ -68,21 +67,22 @@ async def mp3_to_ogg(mp3_bytes: bytes) -> bytes:
             with open(ogg_path, "rb") as f:
                 data = f.read()
             os.unlink(ogg_path)
-            return data
-        return b""
+            return data, ""
+        err = result.stderr.decode().strip() if result.stderr else "unknown ffmpeg error"
+        return b"", f"ffmpeg: {err}"
     except FileNotFoundError:
-        return b""
+        return b"", "ffmpeg not installed"
     except Exception as e:
         logger.error(f"mp3_to_ogg error: {e}")
-        return b""
+        return b"", str(e)
 
 
 async def text_to_voice_note(text: str) -> bytes:
     """Generate ogg/opus audio for Telegram voice messages. Falls back to mp3."""
-    mp3_bytes = await text_to_speech(text)
+    mp3_bytes, _ = await text_to_speech(text)
     if not mp3_bytes:
         return b""
-    ogg_bytes = await mp3_to_ogg(mp3_bytes)
+    ogg_bytes, _ = await mp3_to_ogg(mp3_bytes)
     return ogg_bytes if ogg_bytes else mp3_bytes
 
 
