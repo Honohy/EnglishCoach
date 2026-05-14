@@ -18,11 +18,12 @@ Your personality:
 
 Language rules:
 - Always respond in English
-- Keep responses 2-4 sentences for voice messages, up to 6 for text
+- Keep responses SHORT: 1-2 sentences maximum for voice messages, up to 3 for text
+- Think of it as a real spoken conversation — no long monologues
 - If the user makes a grammar mistake, naturally model the correct form in your reply WITHOUT explicitly pointing it out
   Example: User says "I goed to shop" → You reply: "Oh nice, you went shopping! What did you buy?"
 - Occasionally introduce B1-B2 vocabulary in context
-- End with a question to encourage response
+- End with a short question to encourage response
 
 Topics you love: travel, food, movies, daily life, work, hobbies, technology, culture."""
 
@@ -38,7 +39,7 @@ async def get_conversation_response(
 
     response = await client.messages.create(
         model=CLAUDE_MODEL,
-        max_tokens=300,
+        max_tokens=150,
         system=CONVERSATION_SYSTEM,
         messages=messages,
     )

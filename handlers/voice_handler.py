@@ -3,6 +3,7 @@ VOICE HANDLER
 Handles voice messages and video notes (circles) from Telegram.
 Flow: receive audio → STT → process with agents → TTS → send voice back
 """
+import asyncio
 import logging
 from aiogram import Router, Bot
 from aiogram.types import Message, BufferedInputFile
@@ -67,7 +68,7 @@ async def process_audio_message(message: Message, bot: Bot, file_format: str = "
     await add_voice_message(user_id, "assistant", response_text)
 
     # TTS → try D-ID video_note → fallback to voice → fallback to text
-    await bot.send_chat_action(message.chat.id, "upload_video_note")
+    await bot.send_chat_action(message.chat.id, "upload_voice")
     mp3_bytes, tts_err = await text_to_speech(response_text)
 
     if not mp3_bytes:
@@ -75,7 +76,18 @@ async def process_audio_message(message: Message, bot: Bot, file_format: str = "
         await message.answer(f"🗣 {response_text}")
         return
 
+    # Keep "recording video note" indicator alive during D-ID generation
+    stop_indicator = asyncio.Event()
+
+    async def _keep_video_action():
+        while not stop_indicator.is_set():
+            await bot.send_chat_action(message.chat.id, "record_video_note")
+            await asyncio.sleep(4)
+
+    indicator_task = asyncio.create_task(_keep_video_action())
     video_bytes, did_err = await generate_video_note(mp3_bytes)
+    stop_indicator.set()
+    await indicator_task
 
     if video_bytes:
         video_input = BufferedInputFile(video_bytes, filename="response.mp4")
