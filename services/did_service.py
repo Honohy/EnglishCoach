@@ -11,7 +11,7 @@ import tempfile
 
 import aiohttp
 
-from config import DID_API_KEY, DID_PRESENTER_ID, DID_DRIVER_ID
+from config import DID_API_KEY, DID_PRESENTER_ID, DID_DRIVER_ID, DID_AVATAR_URL
 
 logger = logging.getLogger(__name__)
 
@@ -28,61 +28,62 @@ def _auth_headers(with_content_type: bool = True) -> dict:
     return h
 
 
-async def _create_clip(audio_bytes: bytes, audio_format: str = "mp3") -> tuple[str | None, str]:
+async def _create_talk(audio_bytes: bytes, audio_format: str = "mp3") -> tuple[str | None, str]:
     mime = "audio/mpeg" if audio_format == "mp3" else f"audio/{audio_format}"
     b64 = base64.b64encode(audio_bytes).decode()
+    source_url = DID_AVATAR_URL or f"https://clips-presenters.d-id.com/v2/amber/Y5K02DLS4m/9o3E6z8MPD/image.png"
     payload = {
-        "presenter_id": DID_PRESENTER_ID,
+        "source_url": source_url,
         "script": {
             "type": "audio",
             "audio_base64": f"data:{mime};base64,{b64}"
         },
         "config": {"result_format": "mp4"}
     }
-    if DID_DRIVER_ID:
-        payload["driver_id"] = DID_DRIVER_ID
 
-    logger.info(f"D-ID request: presenter_id={DID_PRESENTER_ID}, audio_size={len(audio_bytes)}b, format={audio_format}")
+    logger.info(f"D-ID /talks request: source_url={source_url}, audio_size={len(audio_bytes)}b")
 
     async with aiohttp.ClientSession() as session:
         try:
             async with session.post(
-                f"{DID_BASE}/clips", json=payload, headers=_auth_headers()
+                f"{DID_BASE}/talks", json=payload, headers=_auth_headers()
             ) as resp:
                 body = await resp.text()
-                logger.info(f"D-ID response {resp.status}: {body}")
+                logger.info(f"D-ID /talks response {resp.status}: {body}")
                 if resp.status not in (200, 201):
                     return None, f"D-ID {resp.status}: {body}"
                 import json as _json
                 data = _json.loads(body)
                 return data.get("id"), ""
         except Exception as e:
-            logger.error(f"D-ID create_clip exception: {e}")
+            logger.error(f"D-ID create_talk exception: {e}")
             return None, f"D-ID exception: {e}"
 
 
-async def _poll_clip(clip_id: str) -> tuple[str | None, str]:
+async def _poll_talk(talk_id: str) -> tuple[str | None, str]:
     deadline = asyncio.get_event_loop().time() + POLL_TIMEOUT
     async with aiohttp.ClientSession() as session:
         while asyncio.get_event_loop().time() < deadline:
             try:
                 async with session.get(
-                    f"{DID_BASE}/clips/{clip_id}",
+                    f"{DID_BASE}/talks/{talk_id}",
                     headers=_auth_headers(with_content_type=False)
                 ) as resp:
-                    data = await resp.json()
+                    body = await resp.text()
+                    import json as _json
+                    data = _json.loads(body)
                     status = data.get("status")
                     if status == "done":
                         return data.get("result_url"), ""
                     if status == "error":
-                        err = data.get("error", {})
-                        logger.error(f"D-ID clip failed: {data}")
-                        return None, f"D-ID clip error: {err}"
+                        logger.error(f"D-ID talk failed: {data}")
+                        return None, f"D-ID talk error: {data.get('error', data)}"
+                    logger.info(f"D-ID poll status: {status}")
             except Exception as e:
                 logger.error(f"D-ID poll: {e}")
                 return None, f"D-ID poll: {e}"
             await asyncio.sleep(POLL_INTERVAL)
-    logger.error(f"D-ID poll timeout for {clip_id}")
+    logger.error(f"D-ID poll timeout for {talk_id}")
     return None, f"D-ID timeout after {POLL_TIMEOUT}s"
 
 
@@ -127,17 +128,15 @@ def _crop_square(video_bytes: bytes) -> bytes:
 
 
 async def generate_video_note(audio_bytes: bytes, audio_format: str = "mp3") -> tuple[bytes, str]:
-    """Full pipeline: audio bytes → D-ID clip → square mp4. Returns (video, error_reason)."""
+    """Full pipeline: audio bytes → D-ID /talks → square mp4. Returns (video, error_reason)."""
     if not DID_API_KEY:
         return b"", "DID_API_KEY not set"
-    if not DID_PRESENTER_ID:
-        return b"", "DID_PRESENTER_ID not set"
 
-    clip_id, err = await _create_clip(audio_bytes, audio_format)
-    if not clip_id:
+    talk_id, err = await _create_talk(audio_bytes, audio_format)
+    if not talk_id:
         return b"", err
 
-    result_url, err = await _poll_clip(clip_id)
+    result_url, err = await _poll_talk(talk_id)
     if not result_url:
         return b"", err
 
