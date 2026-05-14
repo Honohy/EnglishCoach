@@ -4,9 +4,9 @@ title EnglishCoach - Deploy to VPS
 :: ============================================================
 ::  SETTINGS - fill in before first run
 :: ============================================================
-set VPS_HOST=185.244.181.124
+set VPS_HOST=84.200.193.88
 set VPS_USER=root
-set VPS_PASS=hq8:k8Z==T1QW:uGD5Eb
+set VPS_PASS=Shamanking_1989
 set REPO_URL=https://github.com/Honohy/EnglishCoach.git
 set REPO_DIR=/root/EnglishCoach
 :: ============================================================

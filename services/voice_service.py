@@ -52,41 +52,38 @@ async def text_to_speech(text: str) -> bytes:
         return b""
 
 
-async def text_to_voice_note(text: str) -> bytes:
-    """
-    Generate audio optimized for Telegram voice messages (ogg/opus).
-    Falls back to mp3 if conversion fails.
-    """
-    mp3_bytes = await text_to_speech(text)
-    if not mp3_bytes:
-        return b""
-
-    # Try to convert to ogg/opus for better Telegram compatibility
+async def mp3_to_ogg(mp3_bytes: bytes) -> bytes:
+    """Convert mp3 bytes to ogg/opus for Telegram voice messages."""
     try:
-        import subprocess
-        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as mp3_file:
-            mp3_file.write(mp3_bytes)
-            mp3_path = mp3_file.name
-
+        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
+            f.write(mp3_bytes)
+            mp3_path = f.name
         ogg_path = mp3_path.replace(".mp3", ".ogg")
         result = subprocess.run(
             ["ffmpeg", "-i", mp3_path, "-c:a", "libopus", "-b:a", "64k", ogg_path, "-y", "-loglevel", "error"],
             capture_output=True
         )
-
+        os.unlink(mp3_path)
         if result.returncode == 0 and os.path.exists(ogg_path):
             with open(ogg_path, "rb") as f:
-                ogg_bytes = f.read()
-            os.unlink(mp3_path)
+                data = f.read()
             os.unlink(ogg_path)
-            return ogg_bytes
-        else:
-            os.unlink(mp3_path)
-            return mp3_bytes  # fallback to mp3
-
+            return data
+        return b""
     except FileNotFoundError:
-        # ffmpeg not installed - return mp3
-        return mp3_bytes
+        return b""
+    except Exception as e:
+        logger.error(f"mp3_to_ogg error: {e}")
+        return b""
+
+
+async def text_to_voice_note(text: str) -> bytes:
+    """Generate ogg/opus audio for Telegram voice messages. Falls back to mp3."""
+    mp3_bytes = await text_to_speech(text)
+    if not mp3_bytes:
+        return b""
+    ogg_bytes = await mp3_to_ogg(mp3_bytes)
+    return ogg_bytes if ogg_bytes else mp3_bytes
 
 
 async def create_video_note_audio(text: str) -> bytes:

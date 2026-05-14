@@ -7,7 +7,8 @@ import logging
 from aiogram import Router, Bot
 from aiogram.types import Message, BufferedInputFile
 
-from services.voice_service import speech_to_text, text_to_voice_note
+from services.voice_service import speech_to_text, text_to_speech, mp3_to_ogg
+from services.did_service import generate_video_note
 from services.session_service import get_history, add_voice_message, save_grammar_error, get_or_create_user
 from agents.orchestrator import orchestrate
 from agents.conversation_agent import get_conversation_response
@@ -65,16 +66,25 @@ async def process_audio_message(message: Message, bot: Bot, file_format: str = "
     # Save assistant response
     await add_voice_message(user_id, "assistant", response_text)
 
-    # Send voice response
-    await bot.send_chat_action(message.chat.id, "upload_voice")
-    audio_response = await text_to_voice_note(response_text)
+    # TTS → try D-ID video_note → fallback to voice
+    await bot.send_chat_action(message.chat.id, "upload_video_note")
+    mp3_bytes = await text_to_speech(response_text)
 
-    if audio_response:
-        audio_input = BufferedInputFile(audio_response, filename="response.ogg")
-        await message.answer_voice(audio_input, caption=f"_{response_text}_", parse_mode="Markdown")
+    video_bytes = b""
+    if mp3_bytes:
+        video_bytes = await generate_video_note(mp3_bytes)
+
+    if video_bytes:
+        video_input = BufferedInputFile(video_bytes, filename="response.mp4")
+        await message.answer_video_note(video_input)
+        await message.answer(f"_{response_text}_", parse_mode="Markdown")
     else:
-        # Fallback to text if TTS fails
-        await message.answer(f"🗣 {response_text}")
+        ogg_bytes = await mp3_to_ogg(mp3_bytes) if mp3_bytes else b""
+        if ogg_bytes:
+            audio_input = BufferedInputFile(ogg_bytes, filename="response.ogg")
+            await message.answer_voice(audio_input, caption=f"_{response_text}_", parse_mode="Markdown")
+        else:
+            await message.answer(f"🗣 {response_text}")
 
     # Background grammar check (send as separate message if errors found)
     if intent_data.get("needs_correction"):
