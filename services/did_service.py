@@ -28,21 +28,34 @@ def _auth_headers(with_content_type: bool = True) -> dict:
     return h
 
 
-async def _create_talk(audio_bytes: bytes, audio_format: str = "mp3") -> tuple[str | None, str]:
+async def _upload_audio(audio_bytes: bytes, audio_format: str = "mp3") -> tuple[str, str]:
+    """Upload audio to D-ID, returns (audio_url, error)."""
     mime = "audio/mpeg" if audio_format == "mp3" else f"audio/{audio_format}"
-    b64 = base64.b64encode(audio_bytes).decode()
-    source_url = DID_AVATAR_URL or f"https://clips-presenters.d-id.com/v2/amber/Y5K02DLS4m/9o3E6z8MPD/image.png"
+    form = aiohttp.FormData()
+    form.add_field("audio", audio_bytes, filename=f"audio.{audio_format}", content_type=mime)
+    headers = _auth_headers(with_content_type=False)
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.post(f"{DID_BASE}/audios", data=form, headers=headers) as resp:
+                body = await resp.text()
+                logger.info(f"D-ID /audios upload {resp.status}: {body}")
+                if resp.status not in (200, 201):
+                    return "", f"D-ID audio upload {resp.status}: {body}"
+                import json as _json
+                return _json.loads(body).get("url", ""), ""
+        except Exception as e:
+            logger.error(f"D-ID upload_audio: {e}")
+            return "", f"D-ID upload_audio: {e}"
+
+
+async def _create_talk(audio_url: str) -> tuple[str | None, str]:
+    source_url = DID_AVATAR_URL or "https://clips-presenters.d-id.com/v2/amber/Y5K02DLS4m/9o3E6z8MPD/image.png"
     payload = {
         "source_url": source_url,
-        "script": {
-            "type": "audio",
-            "audio_base64": f"data:{mime};base64,{b64}"
-        },
+        "script": {"type": "audio", "audio_url": audio_url},
         "config": {"result_format": "mp4"}
     }
-
-    logger.info(f"D-ID /talks request: source_url={source_url}, audio_size={len(audio_bytes)}b")
-
+    logger.info(f"D-ID /talks request: source_url={source_url}, audio_url={audio_url}")
     async with aiohttp.ClientSession() as session:
         try:
             async with session.post(
@@ -53,11 +66,10 @@ async def _create_talk(audio_bytes: bytes, audio_format: str = "mp3") -> tuple[s
                 if resp.status not in (200, 201):
                     return None, f"D-ID {resp.status}: {body}"
                 import json as _json
-                data = _json.loads(body)
-                return data.get("id"), ""
+                return _json.loads(body).get("id"), ""
         except Exception as e:
-            logger.error(f"D-ID create_talk exception: {e}")
-            return None, f"D-ID exception: {e}"
+            logger.error(f"D-ID create_talk: {e}")
+            return None, f"D-ID create_talk: {e}"
 
 
 async def _poll_talk(talk_id: str) -> tuple[str | None, str]:
@@ -132,7 +144,11 @@ async def generate_video_note(audio_bytes: bytes, audio_format: str = "mp3") -> 
     if not DID_API_KEY:
         return b"", "DID_API_KEY not set"
 
-    talk_id, err = await _create_talk(audio_bytes, audio_format)
+    audio_url, err = await _upload_audio(audio_bytes, audio_format)
+    if not audio_url:
+        return b"", err
+
+    talk_id, err = await _create_talk(audio_url)
     if not talk_id:
         return b"", err
 
